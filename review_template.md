@@ -28,10 +28,10 @@ For each issue you find, note: where it is (file + function), what's wrong, and 
 - Suggested fix: Validate `user_id` before calling the service — e.g. `if not user_id: return jsonify({"error": "user_id is required"}), 400`.
 
 **Issue 3** *(if found)*
-- Location:
-- What's wrong:
-- Why it matters:
-- Suggested fix:
+- Location: [pr1_bulk_purchase.py](prs/pr1_bulk_purchase.py#L51-L55) (`purchase_all` route)
+- What's wrong: The incorrect number of items are returned that were newly marked as purchased
+- Why it matters: The output is inaccurate and includes previously purchased items
+- Suggested fix: change the query for how we arrive at items, which an above issue will automatically fix. 
 
 ### Questions for the Author
 *Things you're uncertain about — design choices that could be intentional or bugs depending on intent.*
