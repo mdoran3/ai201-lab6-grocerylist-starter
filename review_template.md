@@ -36,7 +36,7 @@ For each issue you find, note: where it is (file + function), what's wrong, and 
 ### Questions for the Author
 *Things you're uncertain about — design choices that could be intentional or bugs depending on intent.*
 
->
+> Should `purchase_all_items` raise an error when `list_id` doesn't correspond to an existing list? Right now `filter_by(list_id=list_id)` just returns an empty result set, so the function returns `0` — technically correct, since zero items on a nonexistent list did get purchased. But that "correct" output makes it impossible to tell a bad list ID apart from a real, empty list, and papering over that distinction risks masking bugs upstream (e.g. a caller passing a stale or malformed ID) that could later corrupt data. Was this intentional, or should we look up the list first and 404 if it's missing?
 
 ### Verdict
 - [ ] Approve — ship it
@@ -54,21 +54,21 @@ For each issue you find, note: where it is (file + function), what's wrong, and 
 ### Summary
 *What does this PR do? (1–2 sentences in your own words)*
 
->
+> This PR adds a stats endpoint that returns total/purchased/remaining item counts for a list, plus a breakdown of item counts by category.
 
 ### Issues
 
 **Issue 1**
-- Location:
-- What's wrong:
-- Why it matters:
-- Suggested fix:
+- Location: [pr2_list_stats.py](prs/pr2_list_stats.py#L41-L44) (`get_list_stats`)
+- What's wrong: `by_category` is built from `items`, which includes every item on the list, not just the ones that haven't been purchased yet. So the category breakdown counts purchased items right alongside remaining ones.
+- Why it matters: The stated use case is helping shoppers navigate the store by what's still left to buy — per the request, "break down what's left by category." Mixing in already-purchased items inflates every category's count, so a shopper sees "5 in produce" when only 2 are actually still needed.
+- Suggested fix: Filter to unpurchased items before building the breakdown, e.g. build `by_category` from `[item for item in items if not item.is_purchased]` (or query with `is_purchased=False` directly).
 
 **Issue 2**
-- Location:
-- What's wrong:
-- Why it matters:
-- Suggested fix:
+- Location: [pr2_list_stats.py](prs/pr2_list_stats.py#L59-L63) (`list_stats` route)
+- What's wrong: There's no check that `list_id` actually corresponds to an existing list. If you request stats for a list ID that doesn't exist, `Item.query.filter_by(list_id=list_id).all()` just returns an empty list, and the endpoint happily returns a 200 with `total_items: 0, purchased: 0, remaining: 0, by_category: {}` instead of an error.
+- Why it matters: Callers can't distinguish "this list exists and is empty" from "this list doesn't exist" — a typo'd or stale list ID silently looks like a valid, empty list instead of surfacing a 404. That's a real problem for a frontend trying to tell the user something went wrong.
+- Suggested fix: Look up the list first and return a 404 if it's not found, e.g. `if not GroceryList.query.get(list_id): return jsonify({"error": "list not found"}), 404`, before computing stats.
 
 **Issue 3** *(if found)*
 - Location:
@@ -83,12 +83,12 @@ For each issue you find, note: where it is (file + function), what's wrong, and 
 
 ### Verdict
 - [ ] Approve — ship it
-- [ ] Request Changes — needs fixes before merging
+- [X] Request Changes — needs fixes before merging
 - [ ] Comment — needs discussion before a verdict
 
 **Rationale** *(1–2 sentences)*:
 
->
+> The category breakdown doesn't match the feature's stated purpose since it counts already-purchased items alongside what's actually left to buy, and a bad list ID silently returns a fake "empty list" response instead of a 404. Both are quick fixes, but as written the endpoint would mislead the frontend team it was built for.
 
 ---
 
@@ -98,12 +98,12 @@ For each issue you find, note: where it is (file + function), what's wrong, and 
 
 **1.** Which issue was hardest to spot, and why?
 
->
+> The missing validation for a nonexistent `list_id` in PR #1 was the hardest to spot, because the code doesn't actually produce a wrong answer — it produces a *correct* answer to the wrong question. Calling `purchase_all_items` with a bad list ID returns `0` purchased items, which is technically accurate: zero items on a list that doesn't exist did get purchased. There's no thrown exception, no malformed data, nothing that jumps out while reading the happy path. The bug only becomes visible when you ask "how would a caller tell a bad ID apart from a real, empty list?" and realize they can't — a distinction that matters because silently treating a bad ID as valid input is exactly the kind of gap that lets corrupted or stale data flow further downstream undetected.
 
 **2.** Which issues do you think an LLM reviewer (like Claude reviewing its own code) would most likely miss? Why?
 
->
+> The missing-list-id validation gaps in both PRs are the most likely misses. An LLM reviewer tends to check each function against its own docstring and stated purpose — "does this return the right shape of data for a valid input?" — rather than asking "what happens for inputs the function was never designed to handle?" Since both endpoints return well-formed, 200-status JSON for a bad list ID instead of erroring, there's no exception or type mismatch to flag; the code "works" in every case an LLM would naturally think to trace through. Catching it requires deliberately reasoning about the caller's perspective and adversarial inputs, not just tracing the given code path.
 
 **3.** One thing you'd add to a code review checklist for AI-generated backend code:
 
->
+> For every endpoint, explicitly check: "what does this return when the ID/input references something that doesn't exist?" AI-generated code reliably handles the documented happy path correctly, but just as reliably skips validating that referenced resources actually exist — because nothing in the prompt or docstring calls that out as a requirement. Making that a standing checklist item catches an entire class of silent-failure bugs that would otherwise slip through because the code never throws or crashes.
